@@ -99,8 +99,22 @@ class Handler(BaseHTTPRequestHandler):
         return host in ('localhost', '127.0.0.1', '[::1]') and self.client_address[0] in ('127.0.0.1', '::1')
 
     def _token(self):
-        c = SimpleCookie(self.headers.get('Cookie') or '')
+        c = self._cookies()
         return c['sid'].value if 'sid' in c else None
+
+    def _cookies(self):
+        """Junta TODAS as linhas Cookie: com HTTP/2 o navegador pode mandar uma por cookie,
+        e ler só a primeira perdia a sessão quando outro cookie vinha antes."""
+        c = SimpleCookie()
+        for linha in self.headers.get_all('Cookie') or []:
+            for parte in linha.split(';'):
+                if '=' in parte:
+                    k, v = parte.strip().split('=', 1)
+                    try:
+                        c[k] = v
+                    except Exception:
+                        pass   # nome de cookie que o SimpleCookie não aceita: ignora só ele
+        return c
 
     def _enviar(self, status, corpo, tipo='application/json; charset=utf-8', extra=None):
         if isinstance(corpo, (dict, list)):
@@ -232,7 +246,7 @@ class Handler(BaseHTTPRequestHandler):
         if not CONFIG['google_client_id']:
             return erro('login Google não configurado')
         # proteção dupla do Google (quando o navegador manda o cookie)
-        c = SimpleCookie(self.headers.get('Cookie') or '')
+        c = self._cookies()
         if 'g_csrf_token' in c and c['g_csrf_token'].value != form.get('g_csrf_token'):
             return erro('falha de segurança no login; tente de novo')
         try:
