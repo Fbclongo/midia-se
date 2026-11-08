@@ -122,7 +122,8 @@ def inicio(r):
         dentro = [c['cliente'] for c in cons['clientes'] if c['em_totais']]
         grade = calc.montar_grade(a, a.grade(clientes=set(dentro)), metas=True)
         return {'tipo': 'visao', 'fechado': a.fechado, 'consolidado': cons, 'grade': grade,
-                'pendentes': _pendentes(r.conn)}
+                'pendentes': _pendentes(r.conn), 'tarefas': _tarefas(r.conn, a.dp),
+                'hoje': datetime.date.today().isoformat()}
     if pode(r.pessoa, 'ficha_propria'):
         meus = visiveis(a, r.pessoa)
         cons = a.consolidado(clientes=meus, incluir_grupos=True)
@@ -811,6 +812,64 @@ def desfazer(r):
             db.restaurar(r.conn, int(r.body.get('id')), r.email)
         except ValueError as e:
             raise Erro(str(e))
+    return {'ok': True}
+
+
+# ---------------- To Do's ----------------
+
+def _tarefas(conn, dp, cliente=None, arquivadas=False):
+    sql = 'SELECT * FROM tarefa' + ('' if arquivadas else ' WHERE arquivada_em IS NULL')
+    out = []
+    for x in conn.execute(sql + " ORDER BY COALESCE(prazo, '9999-99-99'), id"):
+        d = dict(x)
+        d['cliente'] = dp.cliente(d['cliente'])
+        if cliente is None or chave(d['cliente']) == chave(cliente):
+            out.append(d)
+    return out
+
+
+@rota('GET', '/api/tarefas')
+def listar_tarefas(r):
+    exigir(r.pessoa, 'visao_geral')
+    dp = calc.Depara(r.conn)
+    cli = r.q('cliente')
+    return {'tarefas': _tarefas(r.conn, dp, dp.cliente(cli) if cli else None, r.q('arquivadas') == '1'),
+            'hoje': datetime.date.today().isoformat()}
+
+
+@rota('POST', '/api/tarefas')
+def criar_tarefa(r):
+    exigir(r.pessoa, 'visao_geral')
+    texto = ' '.join(str(r.body.get('texto') or '').split())
+    if not texto:
+        raise Erro('escreva o To Do')
+    prazo = (r.body.get('prazo') or '').strip() or None
+    if prazo:
+        try:
+            datetime.date.fromisoformat(prazo)
+        except ValueError:
+            raise Erro('prazo inválido')
+    c = calc.Depara(r.conn).cliente(r.body.get('cliente') or '')
+    with Transacao(r.conn):
+        r.conn.execute('INSERT INTO tarefa (cliente, texto, prazo, criado_em, criado_por) VALUES (?,?,?,?,?)',
+                       (c, texto, prazo, agora(), r.email))
+        log(r.conn, r.email, 'TODO', f'{c}: {texto}')
+    return {'ok': True}
+
+
+@rota('POST', '/api/tarefas/arquivar')
+def arquivar_tarefa(r):
+    exigir(r.pessoa, 'visao_geral')
+    tid = int(r.body.get('id'))
+    voltar = bool(r.body.get('desarquivar'))
+    with Transacao(r.conn):
+        if voltar:
+            n = r.conn.execute('UPDATE tarefa SET arquivada_em=NULL, arquivada_por=NULL WHERE id=?', (tid,)).rowcount
+        else:
+            n = r.conn.execute('UPDATE tarefa SET arquivada_em=?, arquivada_por=? WHERE id=?', (agora(), r.email, tid)).rowcount
+        if not n:
+            raise Erro('To Do não encontrado')
+        log(r.conn, r.email, 'TODO_REABERTO' if voltar else 'TODO_ARQUIVADO', str(tid))
     return {'ok': True}
 
 

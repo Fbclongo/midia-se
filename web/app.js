@@ -490,16 +490,133 @@ async function telaInicio(app) {
       ${kpi('Expectativa inicial', fmtMM(t.expectativa_inicial), { cls: 'cinza' })}
     </div>
     <div class="chat"><input id="perg" placeholder='Pergunte: "livre por cliente", "Tim na JCDecaux em setembro", "maiores veículos em reap"…'><button id="perg-ok">Perguntar</button></div><div id="resp"></div>
-    <h2>Clientes</h2><div id="tab"></div>
+    <div id="todos"></div>
+    <h2>Clientes <span class="suave pequeno" style="font-weight:400">clique no cliente para ver o mês a mês e os To Do's</span></h2><div id="tab"></div>
     <h2>Consolidado por veículo</h2><div id="grade"></div>`;
   $('#grupos').onchange = e => { S.grupos = e.target.checked; rotear(); };
   if ($('#xls')) $('#xls').onclick = () => baixar(`/api/exportar?escopo=visao&reap=${S.reap ? 1 : 0}&grupos=${S.grupos ? 1 : 0}`);
+  const nTodo = {};
+  d.tarefas.forEach(x => nTodo[x.cliente] = (nTodo[x.cliente] || 0) + 1);
+  const colsVisao = [...colsCli, { k: 'todos', rot: "To Do", num: 1, fmt: v => v ? `<span class="etiqueta ambar">${v}</span>` : '' }];
   tabela($('#tab'), {
-    id: 'visao', cols: colsCli, linhas, total: t, padrao: { k: 'expectativa_atual', d: -1 },
+    id: 'visao', cols: colsVisao, linhas: linhas.map(l => ({ ...l, todos: nTodo[l.cliente] || 0 })), total: t, padrao: { k: 'expectativa_atual', d: -1 },
     link: l => '#/cliente/' + encodeURIComponent(l.cliente), classeLinha: l => l.em_totais ? '' : 'fora',
   });
+  // na visão geral, clicar no cliente abre o painel (gráfico + To Do's); a ficha completa fica a um clique
+  $('#tab').addEventListener('click', e => {
+    const a = e.target.closest('a[href^="#/cliente/"]');
+    if (!a) return;
+    e.preventDefault();
+    abrirPainelCliente(decodeURIComponent(a.getAttribute('href').slice('#/cliente/'.length)));
+  });
+  desenharTodosAbertos($('#todos'), d.tarefas, d.hoje);
   grade($('#grade'), d.grade, { id: 'visao', rotNome: 'Veículo', link: n => '#/veiculo/' + encodeURIComponent(n) });
   ligarChat();
+}
+
+// ---------- To Do's e painel do cliente (visão de admin) ----------
+const dataBR = s => s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '';
+function situacaoPrazo(prazo, hoje) {
+  if (!prazo) return { cls: '', txt: 'sem prazo' };
+  const dias = Math.round((new Date(prazo + 'T12:00') - new Date(hoje + 'T12:00')) / 864e5);
+  if (dias < 0) return { cls: 'atrasado', txt: `atrasado ${-dias} ${-dias === 1 ? 'dia' : 'dias'}` };
+  if (dias === 0) return { cls: 'hoje', txt: 'vence hoje' };
+  if (dias <= 7) return { cls: 'semana', txt: `vence em ${dias} ${dias === 1 ? 'dia' : 'dias'}` };
+  return { cls: '', txt: `prazo ${dataBR(prazo)}` };
+}
+
+function linhaTodo(x, hoje, comCliente) {
+  const s = situacaoPrazo(x.prazo, hoje);
+  const aberta = !x.arquivada_em;
+  return `<li class="todo ${aberta ? s.cls : 'arquivada'}" data-id="${x.id}">
+    <div class="todo-texto">${comCliente ? `<a href="#" class="todo-cli" data-cli="${esc(x.cliente)}">${esc(x.cliente)}</a> · ` : ''}${esc(x.texto)}</div>
+    <div class="todo-meta">criado ${dataBR((x.criado_em || '').slice(0, 10))}${x.criado_por ? ' por ' + esc(x.criado_por.split('@')[0]) : ''}
+      · ${aberta ? `<b>${s.txt}</b>${x.prazo && s.cls !== '' ? ` (${dataBR(x.prazo)})` : ''}` : `arquivado ${dataBR((x.arquivada_em || '').slice(0, 10))}`}</div>
+    <button class="fantasma pequeno" data-arq="${x.id}" data-volta="${aberta ? '' : '1'}">${aberta ? 'Arquivar' : 'Reabrir'}</button>
+  </li>`;
+}
+
+function ligarTodos(el, depois) {
+  $$('[data-arq]', el).forEach(b => b.onclick = async () => {
+    try { await api('/api/tarefas/arquivar', { method: 'POST', body: { id: +b.dataset.arq, desarquivar: !!b.dataset.volta } }); depois(); }
+    catch (e) { aviso(e.message, true); }
+  });
+  $$('.todo-cli', el).forEach(a => a.onclick = e => { e.preventDefault(); abrirPainelCliente(a.dataset.cli); });
+}
+
+function desenharTodosAbertos(el, tarefas, hoje) {
+  if (!tarefas.length) { el.innerHTML = ''; return; }
+  const atrasadas = tarefas.filter(x => x.prazo && x.prazo < hoje).length;
+  el.innerHTML = `<h2>To Do's em aberto <span class="suave pequeno" style="font-weight:400">${tarefas.length}${atrasadas ? ` · <span class="meta-baixo">${atrasadas} atrasado${atrasadas > 1 ? 's' : ''}</span>` : ''}</span></h2>
+    <ul class="todos">${tarefas.map(x => linhaTodo(x, hoje, true)).join('')}</ul>`;
+  ligarTodos(el, rotear);
+}
+
+/** Barras mês a mês do faturável (e reap, se ligado): cheia = fato (mês fechado), clara hachurada = projeção. */
+function graficoMeses(total, fechado) {
+  const fat = total.fat, rp = S.reap ? total.reap : Array(12).fill(0);
+  const max = Math.max(1, ...fat.map((v, m) => v + rp[m]));
+  const W = 720, H = 220, mE = 8, mT = 22, mB = 26, larg = (W - mE * 2) / 12, bw = larg - 10;
+  const y = v => (H - mB) - (v / max) * (H - mB - mT);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" class="grafico" role="img" aria-label="Faturável mês a mês">
+    <defs><pattern id="hach" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--barra-proj)"/><line x1="0" y1="0" x2="0" y2="6" stroke="var(--barra-hach)" stroke-width="2"/></pattern></defs>
+    <line x1="${mE}" x2="${W - mE}" y1="${H - mB}" y2="${H - mB}" class="eixo"/>`;
+  for (let m = 0; m < 12; m++) {
+    const x = mE + m * larg + 5, fato = m < fechado;
+    const yF = y(fat[m]), hF = (H - mB) - yF;
+    const yR = y(fat[m] + rp[m]), hR = yF - yR;
+    const dica = `${MESES_X[m]}: faturável R$ ${fmtR(fat[m])}${S.reap ? ` · reap R$ ${fmtR(rp[m])}` : ''} — ${fato ? 'realizado' : 'projetado'}`;
+    svg += `<g class="barra"><title>${dica}</title><rect x="${x - 4}" y="${mT - 6}" width="${bw + 8}" height="${H - mB - mT + 6}" fill="transparent"/>`;
+    if (hF > 0) svg += `<rect x="${x}" y="${yF}" width="${bw}" height="${hF}" rx="3" ${fato ? 'class="b-fato"' : 'fill="url(#hach)" class="b-proj"'}/>`;
+    if (hR > 0) svg += `<rect x="${x}" y="${yR}" width="${bw}" height="${Math.max(0, hR - 2)}" rx="3" class="b-reap ${fato ? '' : 'proj'}"/>`;
+    if (fat[m] + rp[m] > 0) svg += `<text x="${x + bw / 2}" y="${yR - 5}" class="rot-val">${fmtM(fat[m] + rp[m])}</text>`;
+    svg += `<text x="${x + bw / 2}" y="${H - 8}" class="rot-mes">${MESES[m]}</text></g>`;
+  }
+  if (fechado > 0 && fechado < 12) {
+    const xl = mE + fechado * larg;
+    svg += `<line x1="${xl}" x2="${xl}" y1="${mT - 10}" y2="${H - mB}" class="linha-fechado"/>`;
+  }
+  svg += '</svg>';
+  const leg = `<div class="legenda"><span><i class="sw b-fato"></i>realizado (mês fechado)</span><span><i class="sw b-proj"></i>projetado</span>${S.reap ? '<span><i class="sw b-reap"></i>reaplicação</span>' : ''}</div>`;
+  return leg + svg;
+}
+
+async function abrirPainelCliente(nome) {
+  let fechar;
+  const carregar = async (verArquivadas = false) => {
+    const [c, t] = await Promise.all([
+      api('/api/cliente?nome=' + encodeURIComponent(nome)),
+      api('/api/tarefas?cliente=' + encodeURIComponent(nome) + (verArquivadas ? '&arquivadas=1' : '')),
+    ]);
+    const r = c.resumo;
+    const corpo = `<div class="cab" style="margin-bottom:8px"><h3 style="margin:0">${esc(c.cliente)}</h3>
+        <span class="suave pequeno">mês fechado: ${c.fechado ? MESES_X[c.fechado - 1] : 'nenhum'}</span>
+        <div class="dir"><a class="pilula clicavel" href="#/cliente/${encodeURIComponent(c.cliente)}" id="ir-ficha">Abrir ficha completa →</a><button class="fantasma" data-fechar>Fechar</button></div></div>
+      <div class="kpis">${kpi('Expectativa atual', fmtMM(r.expectativa_atual))}${kpi('Realizado', fmtMM(r.realizado_fat))}${kpi('Projetado', fmtMM(r.projetado_fat))}${kpi('Exp. inicial', fmtMM(r.expectativa_inicial || 0), { cls: 'cinza' })}</div>
+      ${graficoMeses(c.grade.total, c.fechado)}
+      <h3 style="margin:18px 0 8px">To Do's</h3>
+      <div class="linha-form"><input id="td-texto" placeholder="O que precisa cobrar? Ex.: confirmar plano de out com a Keeta" style="flex:1;min-width:240px">
+        <label class="pequeno suave">prazo <input type="date" id="td-prazo"></label><button id="td-add">Adicionar</button></div>
+      <ul class="todos">${t.tarefas.length ? t.tarefas.map(x => linhaTodo(x, t.hoje, false)).join('') : '<li class="suave pequeno">Nenhum To Do em aberto.</li>'}</ul>
+      <button class="link pequeno" id="td-arq">${verArquivadas ? 'Esconder arquivados' : 'Ver arquivados'}</button>`;
+    if (!fechar) fechar = modal(`<div id="painel">${corpo}</div>`, null);
+    else $('#painel').innerHTML = corpo;
+    $('#modal .caixa').classList.add('larga');
+    const el = $('#painel');
+    $$('[data-fechar]', el).forEach(b => b.onclick = () => { fechar(); rotear(); });
+    $('#ir-ficha', el).onclick = () => fechar();
+    const add = async () => {
+      const texto = $('#td-texto', el).value.trim();
+      if (!texto) return aviso('Escreva o To Do.', true);
+      try { await api('/api/tarefas', { method: 'POST', body: { cliente: c.cliente, texto, prazo: $('#td-prazo', el).value } }); carregar(verArquivadas); }
+      catch (e) { aviso(e.message, true); }
+    };
+    $('#td-add', el).onclick = add;
+    $('#td-texto', el).onkeydown = e => { if (e.key === 'Enter') add(); };
+    $('#td-arq', el).onclick = () => carregar(!verArquivadas);
+    ligarTodos(el, () => carregar(verArquivadas));
+  };
+  try { await carregar(); } catch (e) { aviso(e.message, true); }
 }
 
 function ligarChat() {

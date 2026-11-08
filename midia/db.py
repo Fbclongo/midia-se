@@ -82,6 +82,14 @@ CREATE TABLE IF NOT EXISTS snapshot (
 );
 
 CREATE TABLE IF NOT EXISTS sessao (token TEXT PRIMARY KEY, email TEXT, criado TEXT);
+
+-- To Do's de acompanhamento por cliente (visão de admin). Arquivar = concluir.
+CREATE TABLE IF NOT EXISTS tarefa (
+  id INTEGER PRIMARY KEY, cliente TEXT NOT NULL, texto TEXT NOT NULL,
+  prazo TEXT,                 -- AAAA-MM-DD, opcional
+  criado_em TEXT, criado_por TEXT,
+  arquivada_em TEXT, arquivada_por TEXT
+);
 """
 
 _lock = threading.RLock()
