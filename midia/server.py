@@ -214,9 +214,10 @@ class Handler(BaseHTTPRequestHandler):
         # Não redireciona direto (303): a página que viria do Google ainda conta como
         # navegação de outro site e o navegador não manda o cookie na primeira chamada.
         # Uma página nossa que faz o redirecionamento resolve.
-        html = (b'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/">'
+        html = (b'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="2;url=/">'
                 b'<title>Entrando...</title><p style="font-family:system-ui;padding:40px">Entrando...</p>'
-                b'<script>location.replace("/")</script>')
+                b'<script>try{sessionStorage.setItem("midia.login","1")}catch(e){}'
+                b'setTimeout(function(){location.replace("/")},400)</script>')
         self._enviar(200, html, 'text/html; charset=utf-8',
                      {'Set-Cookie': f'sid={tok}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax{seguro}'})
 
