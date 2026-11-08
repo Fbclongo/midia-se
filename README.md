@@ -22,6 +22,15 @@ python run.py teste    # testes das regras + conferência independente sobre os 
 
 O banco fica em `dados/midia.db` (SQLite). Para backup, basta copiar esse arquivo.
 
+## No ar (Render)
+
+- Endereço: **https://midia-sw.onrender.com** (serviço `midia-sw`, plano Starter, disco de 1 GB em `/var/data`).
+- Configuração em [render.yaml](render.yaml). Código em github.com/Fbclongo/midia-se.
+- **Atualizar o sistema:** `git push` para o GitHub — o Render publica sozinho. O banco fica no disco e não é afetado.
+- **Backup:** o servidor grava um por dia (últimos 30); superadmin baixa ou restaura em Administração → Desfazer.
+- Login Google: projeto `midia-sw-streetwise` no Google Cloud, cliente OAuth "Midia SW web", público Interno.
+  Se mudar o endereço, adicione a nova origem em Google Auth Platform → Clientes.
+
 ## Login Google (produção)
 
 1. No Google Cloud Console, crie um "OAuth client ID" do tipo *Web application*, com a origem do site (ex.: `https://midia.streetwise.com.br`).
