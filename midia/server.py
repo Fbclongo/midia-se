@@ -211,7 +211,14 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
         seguro = '; Secure' if CONFIG['https'] else ''
-        self._redirecionar('/', f'sid={tok}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax{seguro}')
+        # Não redireciona direto (303): a página que viria do Google ainda conta como
+        # navegação de outro site e o navegador não manda o cookie na primeira chamada.
+        # Uma página nossa que faz o redirecionamento resolve.
+        html = (b'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/">'
+                b'<title>Entrando...</title><p style="font-family:system-ui;padding:40px">Entrando...</p>'
+                b'<script>location.replace("/")</script>')
+        self._enviar(200, html, 'text/html; charset=utf-8',
+                     {'Set-Cookie': f'sid={tok}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax{seguro}'})
 
     def _login_google(self, conn, body):
         if not CONFIG['google_client_id']:
