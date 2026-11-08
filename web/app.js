@@ -479,7 +479,7 @@ async function telaInicio(app) {
   app.innerHTML = `<div class="cab"><h1>Visão geral ${S.ano}</h1>
       <span class="suave">mês fechado: <b>${d.fechado ? MESES_X[d.fechado - 1] : 'nenhum'}</b></span>
       ${d.pendentes.veiculos || d.pendentes.clientes ? `<a class="etiqueta ambar" href="#/admin/veiculos">${d.pendentes.veiculos} veículos e ${d.pendentes.clientes} clientes pendentes de canonizar</a>` : ''}
-      <div class="dir"><label class="pequeno"><input type="checkbox" id="grupos" ${S.grupos ? 'checked' : ''}> incluir grupos (whitelabel) nos totais</label>
+      <div class="dir"><label class="pequeno" title="Whitelabels ficam fora da lista e dos totais; marque para ver e somar"><input type="checkbox" id="grupos" ${S.grupos ? 'checked' : ''}> mostrar whitelabels</label>
       ${pode('exportar') ? '<button class="fantasma" id="xls">Exportar Excel</button>' : ''}</div></div>
     <div class="kpis">
       ${kpi('Expectativa atual', fmtMM(t.expectativa_atual), { titulo: 'Realizado faturável + projetado faturável, somado por cliente' })}
@@ -499,7 +499,7 @@ async function telaInicio(app) {
   d.tarefas.forEach(x => nTodo[x.cliente] = (nTodo[x.cliente] || 0) + 1);
   const colsVisao = [...colsCli, { k: 'todos', rot: "To Do", num: 1, fmt: v => v ? `<span class="etiqueta ambar">${v}</span>` : '' }];
   tabela($('#tab'), {
-    id: 'visao', cols: colsVisao, linhas: linhas.map(l => ({ ...l, todos: nTodo[l.cliente] || 0 })), total: t, padrao: { k: 'expectativa_atual', d: -1 },
+    id: 'visao', cols: colsVisao, linhas: linhas.filter(l => S.grupos || l.em_totais).map(l => ({ ...l, todos: nTodo[l.cliente] || 0 })), total: t, padrao: { k: 'expectativa_atual', d: -1 },
     link: l => '#/cliente/' + encodeURIComponent(l.cliente), classeLinha: l => l.em_totais ? '' : 'fora',
   });
   // na visão geral, clicar no cliente abre o painel (gráfico + To Do's); a ficha completa fica a um clique
@@ -592,13 +592,14 @@ async function abrirPainelCliente(nome) {
     const corpo = `<div class="cab" style="margin-bottom:8px"><h3 style="margin:0">${esc(c.cliente)}</h3>
         <span class="suave pequeno">mês fechado: ${c.fechado ? MESES_X[c.fechado - 1] : 'nenhum'}</span>
         <div class="dir"><a class="pilula clicavel" href="#/cliente/${encodeURIComponent(c.cliente)}" id="ir-ficha">Abrir ficha completa →</a><button class="fantasma" data-fechar>Fechar</button></div></div>
-      <div class="kpis">${kpi('Expectativa atual', fmtMM(r.expectativa_atual))}${kpi('Realizado', fmtMM(r.realizado_fat))}${kpi('Projetado', fmtMM(r.projetado_fat))}${kpi('Exp. inicial', fmtMM(r.expectativa_inicial || 0), { cls: 'cinza' })}</div>
       ${graficoMeses(c.grade.total, c.fechado)}
+      <div class="kpis" style="margin-top:14px">${kpi('Expectativa atual', fmtMM(r.expectativa_atual))}${kpi('Realizado', fmtMM(r.realizado_fat))}${kpi('Projetado', fmtMM(r.projetado_fat))}${kpi('Exp. inicial', fmtMM(r.expectativa_inicial || 0), { cls: 'cinza' })}</div>
       <h3 style="margin:18px 0 8px">To Do's</h3>
       <div class="linha-form"><input id="td-texto" placeholder="O que precisa cobrar? Ex.: confirmar plano de out com a Keeta" style="flex:1;min-width:240px">
         <label class="pequeno suave">prazo <input type="date" id="td-prazo"></label><button id="td-add">Adicionar</button></div>
       <ul class="todos">${t.tarefas.length ? t.tarefas.map(x => linhaTodo(x, t.hoje, false)).join('') : '<li class="suave pequeno">Nenhum To Do em aberto.</li>'}</ul>
-      <button class="link pequeno" id="td-arq">${verArquivadas ? 'Esconder arquivados' : 'Ver arquivados'}</button>`;
+      <button class="link pequeno" id="td-arq">${verArquivadas ? 'Esconder arquivados' : 'Ver arquivados'}</button>
+      <h3 style="margin:22px 0 8px">Detalhe por veículo</h3><div id="painel-grade"></div>`;
     if (!fechar) fechar = modal(`<div id="painel">${corpo}</div>`, null);
     else $('#painel').innerHTML = corpo;
     $('#modal .caixa').classList.add('larga');
@@ -615,6 +616,10 @@ async function abrirPainelCliente(nome) {
     $('#td-texto', el).onkeydown = e => { if (e.key === 'Enter') add(); };
     $('#td-arq', el).onclick = () => carregar(!verArquivadas);
     ligarTodos(el, () => carregar(verArquivadas));
+    const lt = c.long_tail ? { nome: 'Veículos Long Tail', fat: c.long_tail.fat, reap: c.long_tail.reap, aberto_fat: Array(12).fill(0), aberto_reap: Array(12).fill(0) } : null;
+    grade($('#painel-grade', el), c.grade, { id: 'painel', rotNome: 'Veículo', longTail: lt,
+      link: n => { return '#/veiculo/' + encodeURIComponent(n); } });
+    $('#painel-grade', el).addEventListener('click', e => { if (e.target.closest('a')) fechar(); });
   };
   try { await carregar(); } catch (e) { aviso(e.message, true); }
 }
