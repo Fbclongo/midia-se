@@ -484,6 +484,33 @@ def atributos_cliente(r):
     return {'ok': True}
 
 
+@rota('POST', '/api/cliente/excluir')
+def excluir_cliente(r):
+    """Apaga um cliente que não movimenta dinheiro (sem PIs e sem projeção).
+    Leva junto expectativa, pacotes e To Do's. Guarda cópia para desfazer."""
+    exigir(r.pessoa, 'equipe')
+    dp = calc.Depara(r.conn)
+    c = dp.cliente(r.body.get('cliente') or '')
+    k = chave(c)
+    if k not in dp.cli_canon:
+        raise Erro('cliente não encontrado')
+    grafias = [x['chave'] for x in r.conn.execute('SELECT chave FROM cliente WHERE chave(canonico)=?', (k,))]
+    n_pi = sum(1 for x in r.conn.execute('SELECT cliente_bruto FROM pi') if dp.cliente(x[0]) == c)
+    n_proj = sum(1 for x in r.conn.execute('SELECT cliente FROM projecao') if dp.cliente(x[0]) == c)
+    if n_pi or n_proj:
+        raise Erro(f'{c} tem {n_pi} PIs e {n_proj} células de projeção — não dá para excluir. '
+                   'Se é o mesmo cliente com outro nome, use o de-para de clientes para juntar.')
+    with Transacao(r.conn):
+        sid = snapshot(r.conn, r.email, f'Excluir cliente {c}', {
+            'cliente': ('chave(canonico)=?', (k,)), 'expectativa': ('chave(cliente)=?', (k,)),
+            'pacote': ('chave(cliente)=?', (k,)), 'tarefa': ('chave(cliente)=?', (k,))})
+        for t, col in (('expectativa', 'cliente'), ('pacote', 'cliente'), ('tarefa', 'cliente')):
+            r.conn.execute(f'DELETE FROM {t} WHERE chave({col})=?', (k,))
+        r.conn.execute('DELETE FROM cliente WHERE chave(canonico)=?', (k,))
+        log(r.conn, r.email, 'CLIENTE_EXCLUIDO', f'{c} ({len(grafias)} grafias)')
+    return {'ok': True, 'snapshot': sid}
+
+
 # ---------------- de-para ----------------
 
 def _movimento_por_bruto(conn, coluna):

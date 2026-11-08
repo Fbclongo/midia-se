@@ -854,11 +854,17 @@ async function telaEquipe(app) {
         <td><select class="dir-sel"><option value="">—</option>${diretores.map(p => `<option value="${esc(p.email)}" ${p.email === c.diretor_email ? 'selected' : ''}>${esc(p.nome || p.email)}</option>`).join('')}
           ${c.diretor_email && !diretores.some(p => p.email === c.diretor_email) ? `<option selected value="${esc(c.diretor_email)}">⚠ ${esc(c.diretor_email)} (inativo/fora da equipe)</option>` : ''}</select></td>
         <td><input class="grupo" value="${esc(c.grupo || '')}" placeholder="—"></td><td><input class="gneg" value="${esc(c.grupo_negociacao || '')}" placeholder="—"></td>
-        <td><input type="checkbox" class="ativo" ${c.ativo ? 'checked' : ''}></td><td><button class="fantasma salvar">Salvar</button></td></tr>`).join('')}
+        <td><input type="checkbox" class="ativo" ${c.ativo ? 'checked' : ''}></td><td style="white-space:nowrap"><button class="fantasma salvar">Salvar</button> <button class="link excluir" title="Só para cliente sem PIs nem projeção">excluir</button></td></tr>`).join('')}
     </tbody></table></div>`;
   $$('tr[data-e] .salvar').forEach(b => b.onclick = async () => {
     const tr = b.closest('tr');
     try { await api('/api/pessoa', { method: 'POST', body: { email: tr.dataset.e, nome: $('.nome', tr).value, papel: $('.papel', tr).value, ativo: $('.ativo', tr).checked } }); aviso('Salvo.'); rotear(); }
+    catch (e) { aviso(e.message, true); }
+  });
+  $$('tr[data-c] .excluir').forEach(b => b.onclick = async () => {
+    const nome = b.closest('tr').dataset.c;
+    if (!confirm(`Excluir o cliente ${nome}? Some da lista junto com expectativa, pacotes e To Do's. Dá para desfazer em Administração → Desfazer.`)) return;
+    try { await api('/api/cliente/excluir', { method: 'POST', body: { cliente: nome } }); aviso(`${nome} excluído.`); rotear(); }
     catch (e) { aviso(e.message, true); }
   });
   $$('tr[data-c] .salvar').forEach(b => b.onclick = async () => {
