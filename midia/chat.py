@@ -101,14 +101,22 @@ def achar_quebra(q):
     return None, False
 
 
+import contextvars
+
+# casas decimais em milhões: 2 nas telas de diretor, 1 na visão geral
+CASAS = contextvars.ContextVar('casas', default=2)
+
+
 def M(c):
     if abs(c) >= 100_000_000 or c == 0:
-        return f'R$ {milhoes(c)}'
+        n = CASAS.get()
+        return 'R$ ' + f'{c / 100_000_000:,.{n}f}'.replace(',', 'X').replace('.', ',').replace('X', '.') + 'M'
     return 'R$ ' + f'{c / 100_000:,.1f}'.replace(',', 'X').replace('.', ',').replace('X', '.') + ' mil'
 
 
-def responder(a, clientes_visiveis, q, reap=True, incluir_grupos=False):
+def responder(a, clientes_visiveis, q, reap=True, incluir_grupos=False, casas=2):
     """a: calc.Ano. clientes_visiveis: lista de clientes que a pessoa pode ver."""
+    CASAS.set(1 if casas == 1 else 2)
     q = (q or '').strip()
     if not q:
         return {'texto': 'Faça uma pergunta. Ex.: "quanto a Keeta investe na Eletromidia?"'}

@@ -21,9 +21,16 @@ function lerLocal(k) { try { return localStorage.getItem('midia.' + k); } catch 
 function gravarLocal(k, v) { try { localStorage.setItem('midia.' + k, v); } catch { } }
 
 // ---------- números: centavos inteiros sempre ----------
-const nf2 = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtM = c => c ? nf2.format(c / 1e8) : '–';            // milhões, 2 casas
-const fmtMM = c => 'R$ ' + nf2.format((c || 0) / 1e8) + 'M';
+// Milhões: 2 casas só nas telas de diretor (ficha do cliente, "meus clientes"); 1 casa no resto.
+// É só exibição — o valor por baixo é sempre o exato em centavos.
+const NF = {
+  1: new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+  2: new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+};
+const nf2 = NF[2];
+S.casas = 2;
+const fmtM = c => c ? NF[S.casas].format(c / 1e8) : '–';
+const fmtMM = c => 'R$ ' + NF[S.casas].format((c || 0) / 1e8) + 'M';
 const fmtR = c => nf2.format((c || 0) / 100);                // reais exatos
 const pct = x => x == null ? '–' : Math.round(x * 100) + '%';
 
@@ -207,6 +214,7 @@ async function rotear() {
   const partes = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   const [r0, r1] = partes;
   montarNav(r0 || '');
+  S.casas = (S.me?.papel === 'diretor' || r0 === 'cliente') ? 2 : 1;
   const app = $('#app');
   app.innerHTML = '<p class="carregando">Carregando…</p>';
   try {
@@ -492,7 +500,7 @@ function ligarChat() {
   const ir = async () => {
     const q = $('#perg').value.trim(); if (!q) return;
     try {
-      const r = await api(`/api/chat?q=${encodeURIComponent(q)}&reap=${S.reap ? 1 : 0}&grupos=${S.grupos ? 1 : 0}`);
+      const r = await api(`/api/chat?q=${encodeURIComponent(q)}&reap=${S.reap ? 1 : 0}&grupos=${S.grupos ? 1 : 0}&casas=${S.casas}`);
       $('#resp').innerHTML = `<div class="resposta">${esc(r.texto)}</div>`;
     } catch (e) { aviso(e.message, true); }
   };

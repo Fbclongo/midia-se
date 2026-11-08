@@ -854,7 +854,8 @@ def perguntar(r):
     vis = visiveis(a, r.pessoa)
     if not vis:
         raise Proibido('sem acesso')
-    return chat.responder(a, vis, r.q('q', ''), reap=r.q('reap', '1') == '1', incluir_grupos=r.q('grupos') == '1')
+    return chat.responder(a, vis, r.q('q', ''), reap=r.q('reap', '1') == '1', incluir_grupos=r.q('grupos') == '1',
+                          casas=1 if r.q('casas') == '1' else 2)
 
 
 @rota('GET', '/api/exportar')
