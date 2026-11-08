@@ -27,8 +27,8 @@ services:
         value: streetwise.com.br
       - key: MIDIA_SUPERADMIN
         value: filipe.longo@streetwise.com.br
-      - key: MIDIA_GOOGLE_CLIENT_ID
-        sync: false          # preenchido no painel do Render
+      - key: MIDIA_GOOGLE_CLIENT_ID   # público (vai na página de login); projeto midia-sw-streetwise
+        value: 269643608695-kdsdmgupvhhgleb6np5lksuq7s547m1u.apps.googleusercontent.com
       - key: PYTHONUNBUFFERED
         value: "1"
       - key: PYTHONIOENCODING
