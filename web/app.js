@@ -458,7 +458,7 @@ async function telaInicio(app) {
     ...(S.reap ? [{ k: 'reap', rot: 'Reaplicação', num: 1, fmt: fmtM, cls: 'chave-reap' }] : []),
     { k: 'expectativa_inicial', rot: 'Exp. inicial', num: 1, fmt: fmtM, cls: 'suave' },
     { k: 'diferenca', rot: 'Diferença', num: 1, fmt: v => v == null ? '' : `<span class="${v < 0 ? 'meta-baixo' : ''}">${fmtM(v)}</span>` },
-    ...(d.tipo === 'visao' ? [{ k: 'diretor_email', rot: 'Diretor', fmt: v => esc((v || '—').split('@')[0]) }, { k: 'grupo', rot: 'Grupo', fmt: v => v ? `<span class="etiqueta">${esc(v)}</span>` : '' }] : []),
+    ...(d.tipo === 'visao' ? [{ k: 'grupo', rot: 'Grupo', fmt: v => v ? `<span class="etiqueta">${esc(v)}</span>` : '' }] : []),
   ];
   const linhas = cons.clientes.filter(c => c.expectativa_atual || c.expectativa_inicial || c.reap || c.aberto_fat);
   if (d.tipo === 'diretor') {
