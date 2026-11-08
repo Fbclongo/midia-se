@@ -1,0 +1,12 @@
+# dados nunca vão para o GitHub
+dados/
+seed/
+*.db
+*.db-wal
+*.db-shm
+*.xlsx
+*.zip
+config.json
+__pycache__/
+*.pyc
+.claude/settings.local.json

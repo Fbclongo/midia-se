@@ -1,0 +1,35 @@
+# Render Blueprint — cria o serviço web com disco persistente para o banco SQLite.
+services:
+  - type: web
+    name: midia-sw
+    runtime: python
+    plan: starter            # o disco persistente exige plano pago
+    region: virginia
+    buildCommand: "echo sem dependencias"
+    startCommand: "python run.py"
+    healthCheckPath: /api/config
+    disk:
+      name: dados
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: MIDIA_DB
+        value: /var/data/midia.db
+      - key: MIDIA_HOST
+        value: 0.0.0.0
+      - key: MIDIA_HTTPS
+        value: "1"
+      - key: MIDIA_LOGIN_DEV
+        value: "0"
+      - key: MIDIA_DOMINIO
+        value: streetwise.com.br
+      - key: MIDIA_SUPERADMIN
+        value: filipe.longo@streetwise.com.br
+      - key: MIDIA_GOOGLE_CLIENT_ID
+        sync: false          # preenchido no painel do Render
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONIOENCODING
+        value: utf-8

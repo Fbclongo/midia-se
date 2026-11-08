@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mídia SW</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="topo" hidden>
+  <a class="marca" href="#/">Mídia SW</a>
+  <nav id="nav"></nav>
+  <div class="ctrl">
+    <label>Ano <select id="ano"></select></label>
+    <label class="chave-reap" title="Liga/desliga reaplicação em tudo: grades, tabelas, chat e Excel"><input type="checkbox" id="reap"> Reaplicação</label>
+    <span id="quem"></span>
+    <button id="sair" class="link">Sair</button>
+  </div>
+</header>
+<main id="app"><p class="carregando">Carregando…</p></main>
+<div id="barra" hidden><span id="barra-txt"></span><div><button id="barra-descartar" class="fantasma">Descartar</button><button id="barra-salvar">Salvar</button></div></div>
+<div id="modal" hidden><div class="caixa"><div id="modal-corpo"></div></div></div>
+<div id="aviso" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>
