@@ -137,6 +137,8 @@ class Handler(BaseHTTPRequestHandler):
             pessoa = api.pessoa_da_sessao(conn, self._token())
             if not pessoa and not publica:
                 tok = self._token()
+                if os.environ.get('MIDIA_DEBUG'):
+                    print('401', url.path, 'cookie=', self.headers.get('Cookie'), 'sec-fetch-site=', self.headers.get('Sec-Fetch-Site'), flush=True)
                 if not tok:
                     motivo = 'sem cookie'
                 elif conn.execute('SELECT 1 FROM sessao WHERE token=?', (tok,)).fetchone():

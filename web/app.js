@@ -182,6 +182,7 @@ async function iniciar() {
   for (let i = 0; acabouDeLogar && i < 6; i++) {
     const r = await fetch('/api/me?ano=' + S.ano, { credentials: 'same-origin', cache: 'no-store' });
     if (r.ok) break;
+    try { const m = (await r.clone().json()).motivo; console.warn('login: tentativa', i + 1, m); sessionStorage.setItem('midia.diag', (sessionStorage.getItem('midia.diag') || '') + `${i + 1}:${m} `); } catch { }
     $('#app').innerHTML = '<p class="carregando">Entrando…</p>';
     await new Promise(res => setTimeout(res, 700));
   }
