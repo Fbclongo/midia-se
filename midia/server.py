@@ -136,7 +136,14 @@ class Handler(BaseHTTPRequestHandler):
             fn, publica = alvo
             pessoa = api.pessoa_da_sessao(conn, self._token())
             if not pessoa and not publica:
-                return self._enviar(401, {'erro': 'faça login'})
+                tok = self._token()
+                if not tok:
+                    motivo = 'sem cookie'
+                elif conn.execute('SELECT 1 FROM sessao WHERE token=?', (tok,)).fetchone():
+                    motivo = 'pessoa inativa'
+                else:
+                    motivo = 'sessão não encontrada'
+                return self._enviar(401, {'erro': 'faça login', 'motivo': motivo})
             if metodo == 'POST' and not publica:
                 # proteção simples contra CSRF: exige cabeçalho que formulário de outro site não envia
                 if self.headers.get('X-Midia') != '1':
