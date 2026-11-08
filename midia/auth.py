@@ -10,7 +10,7 @@ PAPEIS = ('superadmin', 'admin', 'diretor', 'operacao')
 _OPERACAO = {'pis'}
 _DIRETOR = {'ficha_propria'}
 _ADMIN = {'visao_geral', 'ficha_todas', 'editar_todas', 'pis', 'fechar_mes',
-          'equipe', 'depara', 'grupos', 'colar_projecao', 'desfazer'}
+          'equipe', 'depara', 'grupos', 'colar_projecao', 'desfazer', 'exportar'}
 _SUPERADMIN = _ADMIN | {'papeis_admin', 'meta', 'uso', 'backup'}
 
 CAPACIDADES = {

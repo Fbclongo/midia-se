@@ -860,7 +860,9 @@ def perguntar(r):
 
 @rota('GET', '/api/exportar')
 def exportar(r):
-    """Excel da tela atual. Respeita o botão de reap (reap=0 tira reaplicação de tudo)."""
+    """Excel da tela atual. Respeita o botão de reap (reap=0 tira reaplicação de tudo).
+    Diretor não exporta."""
+    exigir(r.pessoa, 'exportar')
     a = calc.Ano(r.conn, r.ano())
     reap = r.q('reap', '1') == '1'
     escopo, nome = r.q('escopo', 'visao'), r.q('nome', '')

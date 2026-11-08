@@ -104,6 +104,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _tratar(self, metodo):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == '/login/google' and metodo == 'POST':
+            return self._login_google_redirect()
         if not url.path.startswith('/api/'):
             return self._estatico(url.path)
         query = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
@@ -170,6 +172,46 @@ class Handler(BaseHTTPRequestHandler):
         if not (CONFIG['login_dev'] and self._local()):
             return self._enviar(403, {'erro': 'login de desenvolvimento só em localhost'})
         return self._abrir_sessao(conn, (body.get('email') or '').strip().lower(), 'dev')
+
+    def _redirecionar(self, destino, cookie=None):
+        self.send_response(303)
+        self.send_header('Location', destino)
+        self.send_header('Cache-Control', 'no-store')
+        if cookie:
+            self.send_header('Set-Cookie', cookie)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def _login_google_redirect(self):
+        """Login Google no modo redirecionamento: o Google faz POST aqui com o token
+        e o usuário volta para a página inicial (sem janela popup)."""
+        n = int(self.headers.get('Content-Length') or 0)
+        form = {k: v[0] for k, v in urllib.parse.parse_qs(self.rfile.read(n).decode('utf-8', 'replace')).items()}
+        erro = lambda msg: self._redirecionar('/?erro=' + urllib.parse.quote(msg))
+        if not CONFIG['google_client_id']:
+            return erro('login Google não configurado')
+        # proteção dupla do Google (quando o navegador manda o cookie)
+        c = SimpleCookie(self.headers.get('Cookie') or '')
+        if 'g_csrf_token' in c and c['g_csrf_token'].value != form.get('g_csrf_token'):
+            return erro('falha de segurança no login; tente de novo')
+        try:
+            email = verificar_google(form.get('credential') or '')
+        except Exception as e:
+            print('login google recusado:', e, flush=True)
+            return erro(f'login recusado pelo Google: {e}')
+        conn = db.conectar()
+        try:
+            p = conn.execute('SELECT * FROM pessoa WHERE lower(email)=lower(?) AND ativo=1', (email,)).fetchone()
+            if not p:
+                print('login sem cadastro:', email, flush=True)
+                return erro(f'{email} não está ativo na equipe do Mídia SW. Peça a um admin para cadastrar.')
+            with Transacao(conn):
+                tok = api.criar_sessao(conn, p['email'])
+                log(conn, p['email'], 'LOGIN', 'google')
+        finally:
+            conn.close()
+        seguro = '; Secure' if CONFIG['https'] else ''
+        self._redirecionar('/', f'sid={tok}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax{seguro}')
 
     def _login_google(self, conn, body):
         if not CONFIG['google_client_id']:

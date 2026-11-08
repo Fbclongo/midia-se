@@ -138,20 +138,21 @@ async function telaLogin() {
   definirPendente(null);
   const cfg = await fetch('/api/config').then(r => r.json());
   S.config = cfg;
-  let html = `<div class="login"><h1>Mídia SW</h1><p class="suave">Entre com sua conta @${esc(cfg.dominio)}.</p><div id="g"></div>`;
+  const erroLogin = new URLSearchParams(location.search).get('erro');
+  if (erroLogin) history.replaceState(null, '', '/' + location.hash);
+  let html = `<div class="login"><h1>Mídia SW</h1><p class="suave">Entre com sua conta @${esc(cfg.dominio)}.</p>
+    ${erroLogin ? `<p class="alerta">${esc(erroLogin)}</p>` : ''}<div id="g"></div>`;
   if (cfg.login_dev) html += `<p class="pequeno suave" style="margin-top:20px">Login de desenvolvimento (só funciona em localhost):</p><div class="pessoas" id="dev"></div>`;
   $('#app').innerHTML = html + '</div>';
   if (cfg.google_client_id) {
     const s = document.createElement('script');
     s.src = 'https://accounts.google.com/gsi/client';
+    s.onerror = () => { $('#g').innerHTML = '<p class="alerta">Não consegui carregar o login do Google. Verifique a internet ou bloqueadores de anúncio.</p>'; };
     s.onload = () => {
+      // modo redirecionamento: sem janela popup (que o navegador pode bloquear)
       google.accounts.id.initialize({
         client_id: cfg.google_client_id, hd: cfg.dominio,
-        callback: async r => {
-          const x = await fetch('/api/login-google', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential: r.credential }) });
-          const j = await x.json();
-          if (x.ok) iniciar(); else aviso(j.erro, true);
-        }
+        ux_mode: 'redirect', login_uri: location.origin + '/login/google',
       });
       google.accounts.id.renderButton($('#g'), { theme: 'outline', size: 'large', text: 'signin_with', locale: 'pt-BR' });
     };
@@ -240,7 +241,7 @@ function kpisCliente(r, lt) {
   let h = kpi('Expectativa atual', fmtMM(r.expectativa_atual), { sub: sub(lt?.expectativa_atual), titulo: 'Realizado faturável + projetado faturável' })
     + kpi('Realizado faturável', fmtMM(r.realizado_fat), { sub: sub(lt?.realizado_fat) })
     + kpi('Projetado faturável', fmtMM(r.projetado_fat), { sub: sub(lt?.projetado_fat) })
-    + kpi('Livre', fmtMM(r.livre), { sub: r.livre_origem?.length ? `<span class="etiqueta ambar" title="${esc(r.livre_origem.join(', '))}">migrado do OTHERS</span>` : '', titulo: 'Soma da linha LIVRE nos meses abertos' });
+    + kpi('Livre', fmtMM(r.livre), { titulo: 'Soma da linha LIVRE nos meses abertos' });
   if (S.reap) h += kpi('Reaplicação', fmtMM(r.reap), { cls: 'reap', sub: lt ? sub(lt.reap) : 'fora das contas de dinheiro' });
   if (r.expectativa_inicial != null) h += kpi('Expectativa inicial', fmtMM(r.expectativa_inicial), { cls: 'cinza', sub: r.expectativa_inicial ? `diferença ${r.diferenca >= 0 ? '+' : ''}${fmtMM(r.diferenca)}` : '' });
   return `<div class="kpis">${h}</div>`;
@@ -462,19 +463,24 @@ async function telaInicio(app) {
   ];
   const linhas = cons.clientes.filter(c => c.expectativa_atual || c.expectativa_inicial || c.reap || c.aberto_fat);
   if (d.tipo === 'diretor') {
-    app.innerHTML = `<div class="cab"><h1>Meus clientes</h1><span class="suave">mês fechado: ${d.fechado ? MESES_X[d.fechado - 1] : 'nenhum'}</span></div>
-      ${kpisCliente({ ...t, expectativa_inicial: t.expectativa_inicial }, null)}
-      <div class="chat"><input id="perg" placeholder="Pergunte sobre seus clientes…"><button id="perg-ok">Perguntar</button></div><div id="resp"></div>
-      <div id="tab"></div>`;
-    tabela($('#tab'), { id: 'dir', cols: colsCli, linhas: cons.clientes, total: t, padrao: { k: 'expectativa_atual', d: -1 }, link: l => '#/cliente/' + encodeURIComponent(l.cliente) });
-    ligarChat();
+    // diretor não tem visão geral: só escolhe o cliente
+    const meus = cons.clientes.filter(c => c.ativo || c.expectativa_atual || c.expectativa_inicial)
+      .sort((a, b) => b.expectativa_atual - a.expectativa_atual || a.cliente.localeCompare(b.cliente, 'pt-BR'));
+    if (meus.length === 1) { location.replace('#/cliente/' + encodeURIComponent(meus[0].cliente)); return; }
+    app.innerHTML = `<div class="cab"><h1>Meus clientes</h1><span class="suave">Escolha um cliente para ver e editar a projeção.</span></div>
+      ${meus.length ? `<div class="cartoes-clientes">${meus.map(c => `<a class="cartao-cliente" href="#/cliente/${encodeURIComponent(c.cliente)}">
+          <span class="nome">${esc(c.cliente)}</span>
+          <span class="val">${fmtMM(c.expectativa_atual)}</span>
+          <span class="suave pequeno">expectativa atual${c.expectativa_inicial ? ` · combinado ${fmtMM(c.expectativa_inicial)}` : ''}</span>
+          <span class="ir">Abrir →</span></a>`).join('')}</div>`
+        : '<p class="alerta">Nenhum cliente está ligado a você ainda. Peça a um admin para definir você como diretor do cliente em Equipe.</p>'}`;
     return;
   }
   app.innerHTML = `<div class="cab"><h1>Visão geral ${S.ano}</h1>
       <span class="suave">mês fechado: <b>${d.fechado ? MESES_X[d.fechado - 1] : 'nenhum'}</b></span>
       ${d.pendentes.veiculos || d.pendentes.clientes ? `<a class="etiqueta ambar" href="#/admin/veiculos">${d.pendentes.veiculos} veículos e ${d.pendentes.clientes} clientes pendentes de canonizar</a>` : ''}
       <div class="dir"><label class="pequeno"><input type="checkbox" id="grupos" ${S.grupos ? 'checked' : ''}> incluir grupos (whitelabel) nos totais</label>
-      <button class="fantasma" id="xls">Exportar Excel</button></div></div>
+      ${pode('exportar') ? '<button class="fantasma" id="xls">Exportar Excel</button>' : ''}</div></div>
     <div class="kpis">
       ${kpi('Expectativa atual', fmtMM(t.expectativa_atual), { titulo: 'Realizado faturável + projetado faturável, somado por cliente' })}
       ${kpi('Realizado faturável', fmtMM(t.realizado_fat))}
@@ -487,7 +493,7 @@ async function telaInicio(app) {
     <h2>Clientes</h2><div id="tab"></div>
     <h2>Consolidado por veículo</h2><div id="grade"></div>`;
   $('#grupos').onchange = e => { S.grupos = e.target.checked; rotear(); };
-  $('#xls').onclick = () => baixar(`/api/exportar?escopo=visao&reap=${S.reap ? 1 : 0}&grupos=${S.grupos ? 1 : 0}`);
+  if ($('#xls')) $('#xls').onclick = () => baixar(`/api/exportar?escopo=visao&reap=${S.reap ? 1 : 0}&grupos=${S.grupos ? 1 : 0}`);
   tabela($('#tab'), {
     id: 'visao', cols: colsCli, linhas, total: t, padrao: { k: 'expectativa_atual', d: -1 },
     link: l => '#/cliente/' + encodeURIComponent(l.cliente), classeLinha: l => l.em_totais ? '' : 'fora',
@@ -512,19 +518,19 @@ async function telaCliente(app, nome) {
   const d = await api('/api/cliente?nome=' + encodeURIComponent(nome));
   const r = d.resumo;
   const exp = r.expectativa_inicial;
-  app.innerHTML = `<div class="cab"><h1>${esc(d.cliente)}</h1>
+  app.innerHTML = `${!pode('visao_geral') ? '<a class="voltar" href="#/">← Meus clientes</a>' : ''}<div class="cab"><h1>${esc(d.cliente)}</h1>
       <button class="pilula ${d.pode_editar ? 'clicavel' : ''}" id="exp" ${d.pode_editar ? '' : 'disabled'} title="Expectativa inicial: o combinado com o cliente para o ano">Expectativa inicial: <b>${exp ? fmtMM(exp) : 'definir'}</b></button>
       ${r.grupo ? `<span class="etiqueta">${esc(r.grupo)} · fora dos totais</span>` : ''}
       ${r.ativo ? '' : '<span class="etiqueta">inativo</span>'}
       <span class="suave pequeno">diretor: ${esc(r.diretor_email || '—')}</span>
-      <div class="dir"><span class="suave pequeno">mês fechado: <b>${d.fechado ? MESES_X[d.fechado - 1] : 'nenhum'}</b></span><button class="fantasma" id="xls">Exportar Excel</button></div></div>
+      <div class="dir"><span class="suave pequeno">mês fechado: <b>${d.fechado ? MESES_X[d.fechado - 1] : 'nenhum'}</b></span>${pode('exportar') ? '<button class="fantasma" id="xls">Exportar Excel</button>' : ''}</div></div>
     <div class="pacotes" id="pacotes"></div>
     ${kpisCliente(r, d.long_tail?.resumo)}
     ${linhaAmbar(r, d.fechado)}
     <div id="grade"></div>
     ${d.pode_editar ? `<div class="linha-form" style="margin-top:10px"><input id="novo-v" list="lista-v" placeholder="Adicionar veículo à grade…" style="min-width:260px"><datalist id="lista-v">${['LIVRE', ...d.veiculos].map(v => `<option value="${esc(v)}">`).join('')}</datalist><button class="fantasma" id="add-v">Adicionar linha</button>
       <span class="suave pequeno">Meses depois de ${d.fechado ? MESES[d.fechado - 1] : '—'} são editáveis. Digite em reais (1.234,56) ou com sufixo (1,5M · 300k). Veículo que não está na lista: lance em LIVRE e peça o cadastro.</span></div>` : ''}`;
-  $('#xls').onclick = () => baixar(`/api/exportar?escopo=cliente&nome=${encodeURIComponent(d.cliente)}&reap=${S.reap ? 1 : 0}`);
+  if ($('#xls')) $('#xls').onclick = () => baixar(`/api/exportar?escopo=cliente&nome=${encodeURIComponent(d.cliente)}&reap=${S.reap ? 1 : 0}`);
   // pacotes
   const pc = $('#pacotes');
   pc.innerHTML = d.pacotes.map(p => `<div class="pacote" data-id="${esc(p.id)}"><div class="suave pequeno">${esc(p.veiculo || 'sem veículo')} · ${esc(p.status || '')}</div><div class="v">${p.valor != null ? fmtMM(p.valor) : '—'}</div><div class="pequeno">${esc(p.descricao || '')}</div>${p.inicio || p.fim ? `<div class="pequeno suave">${esc((p.inicio || '').slice(0, 10))} → ${esc((p.fim || '').slice(0, 10))}</div>` : ''}</div>`).join('')
@@ -593,11 +599,11 @@ async function telaVeiculo(app, nome) {
   app.innerHTML = `<div class="cab"><h1>${esc(d.veiculo)}</h1>
       ${d.meta ? `<span class="pilula">Meta ${S.ano}: <b>${fmtMM(d.meta.meta)}</b> · ${pct(d.meta.pct)} atingido (só faturável)</span>` : ''}
       <span class="suave pequeno" title="${esc(d.grafias.join(' · '))}">${d.grafias.length} grafias no de-para</span>
-      <div class="dir"><button class="fantasma" id="xls">Exportar Excel</button></div></div>
+      <div class="dir">${pode('exportar') ? '<button class="fantasma" id="xls">Exportar Excel</button>' : ''}</div></div>
     <div class="kpis">${kpi('Faturável no ano', fmtMM(tot.fat_partes.ano), { sub: `realizado ${fmtMM(tot.fat_partes.realizado)} · projetado ${fmtMM(tot.fat_partes.projetado)}` })}
       ${S.reap ? kpi('Reaplicação', fmtMM(tot.reap_partes.ano), { cls: 'reap' }) : ''}</div>
     <div id="grade"></div>`;
-  $('#xls').onclick = () => baixar(`/api/exportar?escopo=veiculo&nome=${encodeURIComponent(d.veiculo)}&reap=${S.reap ? 1 : 0}`);
+  if ($('#xls')) $('#xls').onclick = () => baixar(`/api/exportar?escopo=veiculo&nome=${encodeURIComponent(d.veiculo)}&reap=${S.reap ? 1 : 0}`);
   grade($('#grade'), d.grade, { id: 'veiculo', rotNome: 'Cliente', link: n => '#/cliente/' + encodeURIComponent(n) });
 }
 
