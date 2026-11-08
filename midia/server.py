@@ -43,6 +43,36 @@ def _config():
 CONFIG = _config()
 
 
+class _Codigos:
+    """Códigos de login de uso único, válidos por 2 minutos (só em memória)."""
+
+    def __init__(self):
+        import threading
+        self._d, self._lock = {}, threading.Lock()
+
+    def criar(self, email):
+        import secrets
+        import time
+        c = secrets.token_urlsafe(24)
+        with self._lock:
+            agora_s = time.time()
+            for k in [k for k, (_, t) in self._d.items() if agora_s - t > 120]:
+                del self._d[k]
+            self._d[c] = (email, agora_s)
+        return c
+
+    def usar(self, c):
+        import time
+        with self._lock:
+            v = self._d.pop(c, None)
+        if v and time.time() - v[1] <= 120:
+            return v[0]
+        return None
+
+
+CODIGOS = _Codigos()
+
+
 def verificar_google(credencial):
     """Valida o ID token do Google Identity Services. Retorna o email."""
     url = 'https://oauth2.googleapis.com/tokeninfo?id_token=' + urllib.parse.quote(credencial)
@@ -125,6 +155,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._enviar(200, [dict(x) for x in conn.execute('SELECT email, nome, papel FROM pessoa WHERE ativo=1 ORDER BY papel, nome')])
             if url.path == '/api/login-dev' and metodo == 'POST':
                 return self._login_dev(conn, body)
+            if url.path == '/api/login-codigo' and metodo == 'POST':
+                return self._login_codigo(conn, body)
             if url.path == '/api/login-google' and metodo == 'POST':
                 return self._login_google(conn, body)
             if url.path == '/api/logout' and metodo == 'POST':
@@ -211,24 +243,29 @@ class Handler(BaseHTTPRequestHandler):
         conn = db.conectar()
         try:
             p = conn.execute('SELECT * FROM pessoa WHERE lower(email)=lower(?) AND ativo=1', (email,)).fetchone()
-            if not p:
-                print('login sem cadastro:', email, flush=True)
-                return erro(f'{email} não está ativo na equipe do Mídia SW. Peça a um admin para cadastrar.')
-            with Transacao(conn):
-                tok = api.criar_sessao(conn, p['email'])
-                log(conn, p['email'], 'LOGIN', 'google')
         finally:
             conn.close()
-        seguro = '; Secure' if CONFIG['https'] else ''
-        # Não redireciona direto (303): a página que viria do Google ainda conta como
-        # navegação de outro site e o navegador não manda o cookie na primeira chamada.
-        # Uma página nossa que faz o redirecionamento resolve.
-        html = (b'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="2;url=/">'
-                b'<title>Entrando...</title><p style="font-family:system-ui;padding:40px">Entrando...</p>'
-                b'<script>try{sessionStorage.setItem("midia.login","1")}catch(e){}'
-                b'setTimeout(function(){location.replace("/")},400)</script>')
-        self._enviar(200, html, 'text/html; charset=utf-8',
-                     {'Set-Cookie': f'sid={tok}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax{seguro}'})
+        if not p:
+            print('login sem cadastro:', email, flush=True)
+            return erro(f'{email} não está ativo na equipe do Mídia SW. Peça a um admin para cadastrar.')
+        # O cookie criado aqui (resposta a um envio vindo do Google, "outro site") o Chrome
+        # não manda nas chamadas seguintes. Então esta página só leva um código de uso único,
+        # e a própria página do site troca o código pela sessão (/api/login-codigo).
+        codigo = CODIGOS.criar(p['email'])
+        html = ('<!doctype html><meta charset="utf-8"><title>Entrando...</title>'
+                '<p style="font-family:system-ui;padding:40px">Entrando...</p>'
+                '<script>fetch("/api/login-codigo",{method:"POST",credentials:"same-origin",'
+                'headers:{"Content-Type":"application/json"},body:JSON.stringify({codigo:"' + codigo + '"})})'
+                '.then(function(r){return r.json().then(function(j){'
+                'location.replace(r.ok?"/":"/?erro="+encodeURIComponent(j.erro||"falha no login"))})})'
+                '.catch(function(){location.replace("/?erro=falha%20no%20login")})</script>').encode('utf-8')
+        self._enviar(200, html, 'text/html; charset=utf-8')
+
+    def _login_codigo(self, conn, body):
+        email = CODIGOS.usar(str(body.get('codigo') or ''))
+        if not email:
+            return self._enviar(403, {'erro': 'código de login expirado; entre de novo'})
+        return self._abrir_sessao(conn, email, 'google')
 
     def _login_google(self, conn, body):
         if not CONFIG['google_client_id']:

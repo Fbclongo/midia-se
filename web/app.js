@@ -175,17 +175,6 @@ async function telaLogin() {
 
 async function iniciar() {
   let me;
-  // Logo depois do login Google a sessão pode levar um instante para valer:
-  // tenta algumas vezes antes de voltar para a tela de login.
-  let acabouDeLogar = false;
-  try { acabouDeLogar = sessionStorage.getItem('midia.login') === '1'; sessionStorage.removeItem('midia.login'); } catch { }
-  for (let i = 0; acabouDeLogar && i < 6; i++) {
-    const r = await fetch('/api/me?ano=' + S.ano, { credentials: 'same-origin', cache: 'no-store' });
-    if (r.ok) break;
-    try { const m = (await r.clone().json()).motivo; console.warn('login: tentativa', i + 1, m); sessionStorage.setItem('midia.diag', (sessionStorage.getItem('midia.diag') || '') + `${i + 1}:${m} `); } catch { }
-    $('#app').innerHTML = '<p class="carregando">Entrando…</p>';
-    await new Promise(res => setTimeout(res, 700));
-  }
   try { me = await api('/api/me'); } catch { return; }
   S.me = me.pessoa; S.caps = new Set(me.capacidades); S.anos = me.anos;
   if (!S.anos.includes(S.ano)) S.ano = new Date().getFullYear();
