@@ -6,7 +6,7 @@ const S = {
   me: null, caps: new Set(), anos: [],
   ano: +(lerLocal('ano') || new Date().getFullYear()),
   reap: lerLocal('reap') !== '0',
-  grupos: false,
+  filtro: 'diretos',      // visão geral: 'diretos' | 'whitelabel' | 'todos'
   pendente: null,         // alterações não salvas {n, salvar, descartar}
   config: {},
 };
@@ -447,7 +447,7 @@ function grade(el, data, opts) {
 
 // ---------- telas ----------
 async function telaInicio(app) {
-  const d = await api('/api/inicio' + (S.grupos ? '?grupos=1' : ''));
+  const d = await api('/api/inicio?filtro=' + S.filtro);
   if (d.tipo === 'operacao') { location.hash = '#/pis'; return; }
   const cons = d.consolidado, t = cons.total;
   const colsCli = [
@@ -479,7 +479,8 @@ async function telaInicio(app) {
   app.innerHTML = `<div class="cab"><h1>Visão geral ${S.ano}</h1>
       <span class="suave">mês fechado: <b>${d.fechado ? MESES_X[d.fechado - 1] : 'nenhum'}</b></span>
       ${d.pendentes.veiculos || d.pendentes.clientes ? `<a class="etiqueta ambar" href="#/admin/veiculos">${d.pendentes.veiculos} veículos e ${d.pendentes.clientes} clientes pendentes de canonizar</a>` : ''}
-      <div class="dir"><label class="pequeno" title="Whitelabels ficam fora da lista e dos totais; marque para ver e somar"><input type="checkbox" id="grupos" ${S.grupos ? 'checked' : ''}> mostrar whitelabels</label>
+      <div class="dir"><div class="seletor" id="filtro" title="Quais clientes entram na lista, nos números e no gráfico por veículo">
+        ${[['diretos', 'Diretos'], ['whitelabel', 'Whitelabels'], ['todos', 'Ambos']].map(([v, t]) => `<button data-f="${v}" class="${S.filtro === v ? 'ativo' : ''}">${t}</button>`).join('')}</div>
       ${pode('exportar') ? '<button class="fantasma" id="xls">Exportar Excel</button>' : ''}</div></div>
     <div class="kpis">
       ${kpi('Expectativa atual', fmtMM(t.expectativa_atual), { titulo: 'Realizado faturável + projetado faturável, somado por cliente' })}
@@ -493,13 +494,13 @@ async function telaInicio(app) {
     <div id="todos"></div>
     <h2>Clientes <span class="suave pequeno" style="font-weight:400">clique no cliente para ver o mês a mês e os To Do's</span></h2><div id="tab"></div>
     <h2>Consolidado por veículo</h2><div id="grade"></div>`;
-  $('#grupos').onchange = e => { S.grupos = e.target.checked; rotear(); };
-  if ($('#xls')) $('#xls').onclick = () => baixar(`/api/exportar?escopo=visao&reap=${S.reap ? 1 : 0}&grupos=${S.grupos ? 1 : 0}`);
+  $$('#filtro button').forEach(b => b.onclick = () => { S.filtro = b.dataset.f; rotear(); });
+  if ($('#xls')) $('#xls').onclick = () => baixar(`/api/exportar?escopo=visao&reap=${S.reap ? 1 : 0}&filtro=${S.filtro}`);
   const nTodo = {};
   d.tarefas.forEach(x => nTodo[x.cliente] = (nTodo[x.cliente] || 0) + 1);
   const colsVisao = [...colsCli, { k: 'todos', rot: "To Do", num: 1, fmt: v => v ? `<span class="etiqueta ambar">${v}</span>` : '' }];
   tabela($('#tab'), {
-    id: 'visao', cols: colsVisao, linhas: linhas.filter(l => S.grupos || l.em_totais).map(l => ({ ...l, todos: nTodo[l.cliente] || 0 })), total: t, padrao: { k: 'expectativa_atual', d: -1 },
+    id: 'visao', cols: colsVisao, linhas: linhas.map(l => ({ ...l, todos: nTodo[l.cliente] || 0 })), total: t, padrao: { k: 'expectativa_atual', d: -1 },
     link: l => '#/cliente/' + encodeURIComponent(l.cliente), classeLinha: l => l.em_totais ? '' : 'fora',
   });
   // na visão geral, clicar no cliente abre o painel (gráfico + To Do's); a ficha completa fica a um clique
@@ -628,7 +629,7 @@ function ligarChat() {
   const ir = async () => {
     const q = $('#perg').value.trim(); if (!q) return;
     try {
-      const r = await api(`/api/chat?q=${encodeURIComponent(q)}&reap=${S.reap ? 1 : 0}&grupos=${S.grupos ? 1 : 0}&casas=${S.casas}`);
+      const r = await api(`/api/chat?q=${encodeURIComponent(q)}&reap=${S.reap ? 1 : 0}&filtro=${S.filtro}&casas=${S.casas}`);
       $('#resp').innerHTML = `<div class="resposta">${esc(r.texto)}</div>`;
     } catch (e) { aviso(e.message, true); }
   };
@@ -716,7 +717,7 @@ function editarPacote(d, p) {
 }
 
 async function telaVeiculo(app, nome) {
-  const d = await api('/api/veiculo?nome=' + encodeURIComponent(nome) + (S.grupos ? '&grupos=1' : ''));
+  const d = await api('/api/veiculo?nome=' + encodeURIComponent(nome) + '&filtro=' + S.filtro);
   const tot = d.grade.total;
   app.innerHTML = `<div class="cab"><h1>${esc(d.veiculo)}</h1>
       ${d.meta ? `<span class="pilula">Meta ${S.ano}: <b>${fmtMM(d.meta.meta)}</b> · ${pct(d.meta.pct)} atingido (só faturável)</span>` : ''}
@@ -943,16 +944,56 @@ function renomear(tipo, de, existentes, depois) {
 
 async function admFusoes(el) {
   const d = await api('/api/depara/sugestoes');
-  el.innerHTML = `<p class="suave pequeno">Pares de canônicos com nome parecido, depois de tirar razão social, praça e palavras genéricas (outdoor, shopping, mídia…). É só sugestão: ES Outdoor e Cuiabá Outdoor são empresas diferentes, e subsidiárias (Otima → Eletromidia) não aparecem aqui — isso se resolve perguntando.</p>
-    ${d.pares.length ? `<div class="rolagem"><table><thead><tr><th>A</th><th>B</th><th class="num">Similaridade</th><th>Motivo</th><th></th></tr></thead><tbody>
-      ${d.pares.map((p, i) => `<tr><td><a href="#/veiculo/${encodeURIComponent(p.a)}">${esc(p.a)}</a></td><td><a href="#/veiculo/${encodeURIComponent(p.b)}">${esc(p.b)}</a></td><td class="num">${p.score}</td><td class="suave pequeno">${esc(p.motivo)}</td>
-        <td><button class="fantasma" data-f="${i}" data-para="a">fundir em A</button> <button class="fantasma" data-f="${i}" data-para="b">fundir em B</button> <button class="link" data-ig="${i}">não são o mesmo</button></td></tr>`).join('')}</tbody></table></div>` : '<p>Nenhuma sugestão no momento.</p>'}`;
-  $$('[data-f]', el).forEach(b => b.onclick = async () => {
-    const p = d.pares[+b.dataset.f]; const [para, de] = b.dataset.para === 'a' ? [p.a, p.b] : [p.b, p.a];
-    if (!confirm(`Fundir "${de}" em "${para}"?`)) return;
-    try { await api('/api/depara/renomear', { method: 'POST', body: { tipo: 'veiculo', de, para } }); aviso('Fundido.'); admFusoes(el); } catch (e) { aviso(e.message, true); }
+  const G = d.grupos;
+  el.innerHTML = `<div class="cartao" style="margin-bottom:12px"><b>Como funciona</b>
+      <p class="pequeno" style="margin:6px 0 0">Cada cartão é um grupo de nomes que <b>parecem ser o mesmo veículo</b>. Marque os que são iguais, escolha com qual nome fica (⦿) e clique em <b>Juntar</b>.
+      Os PIs não mudam: só passam a somar no mesmo veículo. Se nenhum for igual, clique em <b>Nenhum é igual</b> e o grupo não aparece mais.
+      Tudo pode ser desfeito em Administração → Desfazer.</p>
+      <p class="suave pequeno" style="margin:6px 0 0">Atenção: “Outdoor”, “Shopping” e “Mídia” no nome não fazem duas empresas serem a mesma (ES Outdoor ≠ Cuiabá Outdoor). Subsidiárias (Otima → Eletromidia) não aparecem aqui — junte pelo De-para de veículos.</p></div>
+    ${G.length ? `<div class="linha-form"><b>${G.length} grupos</b><span class="suave pequeno">${G.filter(g => g.tem_pendente).length} com nomes novos dos PIs</span>
+        <span style="margin-left:auto"></span><button id="juntar-todos">Juntar todos os marcados</button></div>
+      <div class="grupos-fusao">${G.map((g, i) => `<div class="cartao grupo" data-g="${i}">
+        <div class="linha-form" style="margin-bottom:6px"><label class="pequeno"><input type="checkbox" class="g-sel" checked> incluir em “juntar todos”</label>
+          ${g.tem_pendente ? '<span class="etiqueta ambar">nome novo dos PIs</span>' : ''}<span class="suave pequeno">${esc(g.motivos.join(' · '))}</span></div>
+        <table><thead><tr><th>É o mesmo?</th><th>Fica este nome</th><th>Nome</th><th class="num">PIs</th><th class="num">Faturável</th></tr></thead><tbody>
+        ${g.membros.map(m => `<tr><td><input type="checkbox" class="m-sel" value="${esc(m.nome)}" checked></td>
+          <td><input type="radio" name="fica-${i}" value="${esc(m.nome)}" ${m.nome === g.sugerido ? 'checked' : ''}></td>
+          <td><a href="#/veiculo/${encodeURIComponent(m.nome)}">${esc(m.nome)}</a> ${m.pendente ? '<span class="etiqueta ambar">novo</span>' : ''}
+            ${m.grafias.length > 1 ? `<span class="suave pequeno" title="${esc(m.grafias.join(' · '))}">${m.grafias.length} grafias</span>` : ''}</td>
+          <td class="num">${m.pis}</td><td class="num">${fmtM(m.FAT)}</td></tr>`).join('')}
+        </tbody></table>
+        <div class="linha-form" style="margin:8px 0 0"><button class="g-juntar">Juntar</button><button class="link g-nenhum">Nenhum é igual</button></div>
+      </div>`).join('')}</div>` : '<p>Nenhuma sugestão no momento. 🎉</p>'}`;
+  const ler = card => {
+    const i = +card.dataset.g;
+    const para = $(`input[name="fica-${i}"]:checked`, card)?.value;
+    const marcados = $$('.m-sel:checked', card).map(c => c.value);
+    return { para, de: marcados.filter(n => n !== para), marcados };
+  };
+  const juntar = async lista => {
+    lista = lista.filter(g => g.para && g.de.length);
+    if (!lista.length) return aviso('Marque pelo menos dois nomes iguais e escolha qual fica.', true);
+    try {
+      const r = await api('/api/depara/fundir', { method: 'POST', body: { grupos: lista.map(({ para, de }) => ({ para, de })) } });
+      aviso(`${r.juntados} ${r.juntados === 1 ? 'nome juntado' : 'nomes juntados'}. Dá para desfazer em Desfazer.`); admFusoes(el);
+    } catch (e) { aviso(e.message, true); }
+  };
+  $$('.grupo', el).forEach(card => {
+    $('.g-juntar', card).onclick = () => juntar([ler(card)]);
+    $('.g-nenhum', card).onclick = async () => {
+      const g = G[+card.dataset.g];
+      try { await api('/api/depara/sugestoes/ignorar', { method: 'POST', body: { nomes: g.membros.map(m => m.nome) } }); card.remove(); }
+      catch (e) { aviso(e.message, true); }
+    };
+    // o nome que fica precisa estar marcado como "é o mesmo"
+    $$('input[type=radio]', card).forEach(rb => rb.onchange = () => { $$('.m-sel', card).find(c => c.value === rb.value).checked = true; });
   });
-  $$('[data-ig]', el).forEach(b => b.onclick = async () => { const p = d.pares[+b.dataset.ig]; await api('/api/depara/sugestoes/ignorar', { method: 'POST', body: { a: p.a, b: p.b } }); admFusoes(el); });
+  const todos = $('#juntar-todos', el);
+  if (todos) todos.onclick = () => {
+    const sel = $$('.grupo', el).filter(c => $('.g-sel', c).checked).map(ler);
+    if (!confirm(`Juntar ${sel.length} grupos do jeito que estão marcados?`)) return;
+    juntar(sel);
+  };
 }
 
 async function admClientes(el) {

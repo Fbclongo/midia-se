@@ -114,7 +114,7 @@ def M(c):
     return 'R$ ' + f'{c / 100_000:,.1f}'.replace(',', 'X').replace('.', ',').replace('X', '.') + ' mil'
 
 
-def responder(a, clientes_visiveis, q, reap=True, incluir_grupos=False, casas=2):
+def responder(a, clientes_visiveis, q, reap=True, incluir_grupos=False, casas=2, carteira=None, rotulo_carteira=None):
     """a: calc.Ano. clientes_visiveis: lista de clientes que a pessoa pode ver."""
     CASAS.set(1 if casas == 1 else 2)
     q = (q or '').strip()
@@ -135,8 +135,13 @@ def responder(a, clientes_visiveis, q, reap=True, incluir_grupos=False, casas=2)
                          'Ex.: "livre por cliente", "maiores veículos em reap", "Tim na JCDecaux em setembro".'}
     metrica = metrica or 'total'
     fora = []
-    escopo_cli = clientes or [c for c in clientes_visiveis if a.em_totais(c, incluir_grupos)]
-    if not clientes and not incluir_grupos:
+    if carteira is not None:
+        escopo_cli = clientes or list(carteira)
+        if not clientes and rotulo_carteira in ('diretos', 'whitelabel'):
+            fora.append('só clientes diretos' if rotulo_carteira == 'diretos' else 'só whitelabels')
+    else:
+        escopo_cli = clientes or [c for c in clientes_visiveis if a.em_totais(c, incluir_grupos)]
+    if carteira is None and not clientes and not incluir_grupos:
         n_fora = len([c for c in clientes_visiveis if not a.em_totais(c)])
         if n_fora:
             fora.append(f'{n_fora} clientes de grupo (whitelabel) fora da conta')

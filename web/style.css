@@ -106,6 +106,12 @@ table.grade td .aberto { display: block; font-size: 10px; color: var(--ambar); }
 #aviso { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); background: var(--tinta); color: #fff; padding: 10px 16px; border-radius: 8px; z-index: 50; max-width: 90vw; }
 #aviso.erro { background: var(--vermelho); }
 
+.grupos-fusao { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 12px; }
+.grupo table td, .grupo table th { padding: 4px 6px; }
+.seletor { display: inline-flex; border: 1px solid var(--linha); border-radius: 8px; overflow: hidden; }
+.seletor button { background: var(--papel); color: var(--tinta); border: none; border-radius: 0; padding: 5px 12px; font-size: 13px; }
+.seletor button + button { border-left: 1px solid var(--linha); }
+.seletor button.ativo { background: var(--forte); color: #fff; }
 #modal .caixa.larga { width: min(960px, 100%); }
 .todos { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 6px; }
 .todo { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; background: var(--papel); border: 1px solid var(--linha); border-left: 4px solid var(--linha); border-radius: 8px; padding: 8px 12px; }

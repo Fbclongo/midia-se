@@ -112,16 +112,31 @@ def visiveis(a, p):
     return [c for c in a.clientes() if auth.pode_ver_cliente(p, a.dp.info_cliente(c))]
 
 
+def filtro_carteira(r):
+    """Qual parte da carteira a visão geral mostra: 'diretos' (padrão), 'whitelabel' ou 'todos'."""
+    f = r.q('filtro') or ('todos' if r.q('grupos') == '1' else 'diretos')
+    return f if f in ('diretos', 'whitelabel', 'todos') else 'diretos'
+
+
+def filtrar_carteira(a, clientes, filtro):
+    """Cliente com grupo preenchido (whitelabel) entra só em 'whitelabel' e 'todos'."""
+    if filtro == 'todos':
+        return list(clientes)
+    wl = filtro == 'whitelabel'
+    return [c for c in clientes if bool(a.dp.info_cliente(c)['grupo']) == wl]
+
+
 @rota('GET', '/api/inicio')
 def inicio(r):
     """Visão geral (admin) ou lista dos clientes do diretor."""
     a = calc.Ano(r.conn, r.ano())
-    grupos = r.q('grupos') == '1'
     if pode(r.pessoa, 'visao_geral'):
-        cons = a.consolidado(incluir_grupos=grupos)
-        dentro = [c['cliente'] for c in cons['clientes'] if c['em_totais']]
-        grade = calc.montar_grade(a, a.grade(clientes=set(dentro)), metas=True)
-        return {'tipo': 'visao', 'fechado': a.fechado, 'consolidado': cons, 'grade': grade,
+        filtro = filtro_carteira(r)
+        lista = filtrar_carteira(a, a.clientes(), filtro)
+        # totais = soma só dos clientes do filtro escolhido
+        cons = a.consolidado(clientes=lista, incluir_grupos=True)
+        grade = calc.montar_grade(a, a.grade(clientes=set(lista)), metas=True)
+        return {'tipo': 'visao', 'filtro': filtro, 'fechado': a.fechado, 'consolidado': cons, 'grade': grade,
                 'pendentes': _pendentes(r.conn), 'tarefas': _tarefas(r.conn, a.dp),
                 'hoje': datetime.date.today().isoformat()}
     if pode(r.pessoa, 'ficha_propria'):
@@ -173,8 +188,7 @@ def veiculo(r):
     vis = set(visiveis(a, r.pessoa))
     if not vis:
         raise Proibido('sem acesso')
-    grupos = r.q('grupos') == '1'
-    incl = {c for c in vis if a.em_totais(c, grupos) or not pode(r.pessoa, 'visao_geral')}
+    incl = set(filtrar_carteira(a, vis, filtro_carteira(r))) if pode(r.pessoa, 'visao_geral') else vis
     linhas = a.grade(por='cliente', veiculo=v, clientes=incl)
     g = calc.montar_grade(a, linhas)
     porv = a.grade(veiculo=v, clientes=incl)
@@ -590,18 +604,22 @@ def depara_veiculo_novo(r):
     return {'ok': True}
 
 
-def _renomear(conn, quem, tipo, de, para):
+TABELAS_RENOMEAR = lambda tabela: {tabela: (None, ()), 'projecao': (None, ()), 'expectativa': (None, ()), 'meta': (None, ()),
+                                   'pacote': (None, ()), 'config': ("chave LIKE 'long_tail%'", ())}
+
+
+def _renomear(conn, quem, tipo, de, para, guardar=True):
     """Renomeia (ou funde) um canônico em todas as tabelas que guardam o nome.
-    Projeção que colide na mesma célula é somada."""
+    Projeção que colide na mesma célula é somada. guardar=False quando quem chama já fez o snapshot."""
     tabela = 'veiculo' if tipo == 'veiculo' else 'cliente'
     dp = calc.Depara(conn)
     existentes = dp.veic_canon if tipo == 'veiculo' else dp.cli_canon
     para = existentes.get(chave(para), para) if chave(para) != chave(de) else para
     col_proj = 'veiculo' if tipo == 'veiculo' else 'cliente'
-    tabs = {tabela: (None, ()), 'projecao': (None, ()), 'expectativa': (None, ()), 'meta': (None, ()), 'pacote': (None, ()),
-            'config': ("chave LIKE 'long_tail%'", ())}
-    snapshot(conn, quem, f'Renomear {tipo} {de} → {para}', tabs)
-    conn.execute(f'UPDATE {tabela} SET canonico=? WHERE chave(canonico)=?', (para, chave(de)))
+    if guardar:
+        snapshot(conn, quem, f'Renomear {tipo} {de} → {para}', TABELAS_RENOMEAR(tabela))
+    # decidido por uma pessoa: deixa de ser pendente
+    conn.execute(f"UPDATE {tabela} SET canonico=?, status='ativo' WHERE chave(canonico)=?", (para, chave(de)))
     # projeção: soma colisões
     linhas = [dict(x) for x in conn.execute(f'SELECT * FROM projecao WHERE chave({col_proj})=?', (chave(de),))]
     conn.execute(f'DELETE FROM projecao WHERE chave({col_proj})=?', (chave(de),))
@@ -644,23 +662,92 @@ def depara_renomear(r):
     return {'ok': True, 'canonico': final}
 
 
+def _par(a, b):
+    return '|'.join(sorted([chave(a), chave(b)]))
+
+
 @rota('GET', '/api/depara/sugestoes')
 def depara_sugestoes(r):
+    """Agrupa os pares parecidos em grupos (A~B e B~C viram um grupo A,B,C) e sugere
+    qual nome fica: o já canonizado (não pendente) que mais movimenta."""
     exigir(r.pessoa, 'depara')
     dp = calc.Depara(r.conn)
     grafias = [{'nome_bruto': x['nome_bruto'], 'canonico': dp.veiculo(x['canonico'])} for x in dp.veic_linhas]
     ignoradas = set(json.loads(db.get_config(r.conn, 'fusoes_ignoradas', '[]')))
-    pares = [p for p in fusoes.sugerir(grafias) if f'{chave(p["a"])}|{chave(p["b"])}' not in ignoradas]
-    return {'pares': pares}
+    pares = [p for p in fusoes.sugerir(grafias) if _par(p['a'], p['b']) not in ignoradas
+             and f'{chave(p["a"])}|{chave(p["b"])}' not in ignoradas]
+    # união dos pares em grupos
+    pai = {}
+
+    def raiz(x):
+        pai.setdefault(x, x)
+        while pai[x] != x:
+            pai[x] = pai[pai[x]]
+            x = pai[x]
+        return x
+    for p in pares:
+        pai[raiz(p['a'])] = raiz(p['b'])
+    grupos = {}
+    for n in pai:
+        grupos.setdefault(raiz(n), []).append(n)
+    # movimento e situação de cada canônico
+    mv = _movimento_por_bruto(r.conn, 'veiculo_bruto')
+    info = {}
+    for x in dp.veic_linhas:
+        c = dp.veiculo(x['canonico'])
+        d = info.setdefault(c, {'nome': c, 'FAT': 0, 'REAP': 0, 'pis': 0, 'pendente': True, 'grafias': []})
+        m = mv.get(x['chave'], {'FAT': 0, 'REAP': 0, 'pis': 0})
+        for k in ('FAT', 'REAP', 'pis'):
+            d[k] += m[k]
+        d['pendente'] = d['pendente'] and x['status'] == 'pendente'
+        d['grafias'].append(x['nome_bruto'])
+    saida = []
+    for membros in grupos.values():
+        ms = sorted((info.get(n, {'nome': n, 'FAT': 0, 'REAP': 0, 'pis': 0, 'pendente': False, 'grafias': [n]}) for n in membros),
+                    key=lambda d: (d['pendente'], -d['FAT'], d['nome'].isupper(), chave(d['nome'])))
+        saida.append({'membros': ms, 'sugerido': ms[0]['nome'],
+                      'tem_pendente': any(m['pendente'] for m in ms),
+                      'motivos': [p['motivo'] for p in pares if p['a'] in membros][:3]})
+    saida.sort(key=lambda g: (not g['tem_pendente'], -sum(m['FAT'] for m in g['membros'])))
+    return {'grupos': saida}
+
+
+@rota('POST', '/api/depara/fundir')
+def depara_fundir(r):
+    """Junta vários grupos de uma vez: [{para, de: [...]}]. Um único snapshot para desfazer."""
+    exigir(r.pessoa, 'depara')
+    grupos = r.body.get('grupos') or []
+    if not grupos:
+        raise Erro('nada para juntar')
+    n = 0
+    with Transacao(r.conn):
+        snapshot(r.conn, r.email, f'Juntar veículos ({len(grupos)} grupos)', TABELAS_RENOMEAR('veiculo'))
+        for g in grupos:
+            para = _validar_canonico(g.get('para'))
+            for de in g.get('de') or []:
+                if chave(de) != chave(para):
+                    _renomear(r.conn, r.email, 'veiculo', de, para, guardar=False)
+                    n += 1
+            # o nome que fica também deixa de ser pendente
+            r.conn.execute("UPDATE veiculo SET status='ativo' WHERE chave(canonico)=?", (chave(para),))
+    return {'ok': True, 'juntados': n}
 
 
 @rota('POST', '/api/depara/sugestoes/ignorar')
 def depara_ignorar(r):
+    """Marca nomes como 'não são o mesmo'. Aceita {a, b} ou {nomes: [...]} (todos os pares do grupo)."""
     exigir(r.pessoa, 'depara')
     ign = set(json.loads(db.get_config(r.conn, 'fusoes_ignoradas', '[]')))
-    ign.add(f'{chave(r.body["a"])}|{chave(r.body["b"])}')
+    nomes = r.body.get('nomes') or [r.body.get('a'), r.body.get('b')]
+    nomes = [n for n in nomes if n]
+    for i, a in enumerate(nomes):
+        for b in nomes[i + 1:]:
+            ign.add(_par(a, b))
     with Transacao(r.conn):
         db.set_config(r.conn, 'fusoes_ignoradas', json.dumps(sorted(ign)))
+        # quem foi revisado e não é igual a ninguém deixa de ser pendente
+        for n in nomes:
+            r.conn.execute("UPDATE veiculo SET status='ativo' WHERE chave(canonico)=?", (chave(n),))
     return {'ok': True}
 
 
@@ -940,8 +1027,10 @@ def perguntar(r):
     vis = visiveis(a, r.pessoa)
     if not vis:
         raise Proibido('sem acesso')
-    return chat.responder(a, vis, r.q('q', ''), reap=r.q('reap', '1') == '1', incluir_grupos=r.q('grupos') == '1',
-                          casas=1 if r.q('casas') == '1' else 2)
+    filtro = filtro_carteira(r) if pode(r.pessoa, 'visao_geral') else 'todos'
+    return chat.responder(a, vis, r.q('q', ''), reap=r.q('reap', '1') == '1', incluir_grupos=True,
+                          casas=1 if r.q('casas') == '1' else 2,
+                          carteira=filtrar_carteira(a, vis, filtro), rotulo_carteira=filtro)
 
 
 @rota('GET', '/api/exportar')
@@ -981,20 +1070,20 @@ def exportar(r):
         arq = f'{v}_{a.ano}.xlsx'
     else:
         exigir(r.pessoa, 'visao_geral')
-        grupos = r.q('grupos') == '1'
-        cons = a.consolidado(incluir_grupos=grupos)
+        lista = filtrar_carteira(a, a.clientes(), filtro_carteira(r))
+        cons = a.consolidado(clientes=lista, incluir_grupos=True)
         cab = ['Cliente', 'Expectativa atual', 'Realizado fat.', 'Projetado fat.', 'Livre'] + (['Reaplicação'] if reap else []) + \
-              ['Expectativa inicial', 'Diferença', 'Nos totais']
+              ['Expectativa inicial', 'Diferença', 'Tipo']
         t = [cab]
         for c in cons['clientes']:
             t.append([c['cliente'], c['expectativa_atual'] / 100, c['realizado_fat'] / 100, c['projetado_fat'] / 100, c['livre'] / 100] +
                      ([c['reap'] / 100] if reap else []) + [(c['expectativa_inicial'] or 0) / 100, (c['diferenca'] or 0) / 100,
-                                                            'sim' if c['em_totais'] else 'não (grupo)'])
+                                                            'whitelabel' if c['grupo'] else 'direto'])
         tt = cons['total']
         t.append(['TOTAL', tt['expectativa_atual'] / 100, tt['realizado_fat'] / 100, tt['projetado_fat'] / 100, tt['livre'] / 100] +
                  ([tt['reap'] / 100] if reap else []) + [tt['expectativa_inicial'] / 100, tt['diferenca'] / 100, ''])
         abas['Clientes'] = t
-        dentro = {c['cliente'] for c in cons['clientes'] if c['em_totais']}
-        abas['Veículos'] = bloco('Veículo', a.grade(clientes=dentro))
-        arq = f'Midia_SW_{a.ano}.xlsx'
+        abas['Veículos'] = bloco('Veículo', a.grade(clientes=set(lista)))
+        sufixo = {'diretos': '_diretos', 'whitelabel': '_whitelabels', 'todos': ''}[filtro_carteira(r)]
+        arq = f'Midia_SW_{a.ano}{sufixo}.xlsx'
     return (xlsx.escrever(abas), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', arq)
